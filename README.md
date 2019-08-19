@@ -66,7 +66,7 @@ Required arguments must be specified in the correct order and immediately follow
   -v, --verbose         print more messages for debugging
 ```
 
-Optional arguments can be utilized by specifying the appropriate flag followed by a space and the desired value.
+Optional arguments can be utilized by specifying the appropriate flag followed by a space and the desired value. Optional arguments can be used in any order as long as they all come after the required (positional) arguments.
 
 ## Example 2
 A modification of Example 1 that utilizies 4 cpus (-w 4).
@@ -77,7 +77,7 @@ python growhon.py airport_sample_sequences.txt airport_sample_hon.csv 3 -w 4
 ## Example 3
 A modification of Example 2 that sets the number of input vector prefixes to 0 (-p 0), increases the threshold multiplier to reduce the number of edges (-t 5.0), and writes the log output to "airport.log" (-o airport.log).
 ```
-python growhon.py airport_sample_sequences.txt airport_sample_hon.csv 3 -w 4 -p 0 -o airport.log
+python growhon.py airport_sample_sequences.txt airport_sample_hon.csv 3 -w 4 -p 0 -t 5.0 -o airport.log
 ```
 
 Example 3 was used to generate the "airport_sample_hon.csv" file in this repository.
