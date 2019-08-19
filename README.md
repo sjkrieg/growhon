@@ -26,6 +26,7 @@ python growhon.py airport_sample_sequences.txt airport_sample_hon.csv 3
 Required arguments must be specified in the correct order and immediately following the python command.
 
 ## Optional Arguments:
+```
   -h, --help            show this help message and exit
   -w NUMCPUS, --numcpus NUMCPUS
                         number of workers (integer; default 1)
@@ -61,7 +62,7 @@ Required arguments must be specified in the correct order and immediately follow
                         this value determines how often the driver logs its progress during the prune phase
                         as a float, it represents the fraction of nodes at each level in the tree
   -v, --verbose         print more messages for debugging
-
+```
 Optional arguments can be utilized by specifying the appropriate flag followed by a space and the desired value.
 
 ## Example 2
