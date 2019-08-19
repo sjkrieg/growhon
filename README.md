@@ -15,7 +15,7 @@ GrowHON can either be installed and imported as a Python package, or downloaded 
 ## Example 1
 Generates a higher-order network with max order 3 from airport_sample_sequences.txt, and writes the resulting network to airport_sample_hon.csv.
 ```
-python growhon.py airport_sample_sequences.txt airport_sample_hon.csv 3
+python growhon.py airport_sample_sequences.txt airport_sample_hon.txt 3
 ```
 
 ## Required (positional) Arguments:
@@ -40,7 +40,7 @@ Required arguments must be specified in the correct order and immediately follow
                         delimiter for entities in input vectors (char; default " ")
                         this is the character by which GrowHON delimits entities in each input vector
   -do OTFDELIMITER, --otfdelimiter OTFDELIMITER
-                        delimiter for output network (char; default ",")
+                        delimiter for output network (char; default " ")
   -t TMULT, --tmult TMULT
                         threshold multiplier for determining dependencies (float; default 1.0)
                         higher values mean that dependencies must exceed a higher threshold, so the resulting network will have fewer edges
@@ -71,16 +71,16 @@ Optional arguments can be utilized by specifying the appropriate flag followed b
 ## Example 2
 A modification of Example 1 that utilizies 4 cpus (-w 4).
 ```
-python growhon.py airport_sample_sequences.txt airport_sample_hon.csv 3 -w 4
+python growhon.py airport_sample_sequences.txt airport_sample_hon.txt 3 -w 4
 ```
 
 ## Example 3
 A modification of Example 2 that sets the number of input vector prefixes to 0 (-p 0), increases the threshold multiplier to reduce the number of edges (-t 5.0), and writes the log output to "airport.log" (-o airport.log).
 ```
-python growhon.py airport_sample_sequences.txt airport_sample_hon.csv 3 -w 4 -p 0 -t 5.0 -o airport.log
+python growhon.py airport_sample_sequences.txt airport_sample_hon.txt 3 -w 4 -p 0 -t 5.0 -o airport.log
 ```
 
-Example 3 was used to generate the "airport_sample_hon.csv" file in this repository.
+Example 3 was used to generate the "airport_sample_hon.txt" file in this repository.
 
 ## Help
 
