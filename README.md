@@ -19,9 +19,11 @@ python growhon.py airport_sample_sequences.txt airport_sample_hon.csv 3
 ```
 
 ## Required (positional) Arguments:
+```
   infname               source path + file name
   otfname               destination path + file name
   maxorder              max order to use in growing the HON
+```
 
 Required arguments must be specified in the correct order and immediately following the python command.
 
@@ -63,6 +65,7 @@ Required arguments must be specified in the correct order and immediately follow
                         as a float, it represents the fraction of nodes at each level in the tree
   -v, --verbose         print more messages for debugging
 ```
+
 Optional arguments can be utilized by specifying the appropriate flag followed by a space and the desired value.
 
 ## Example 2
