@@ -239,7 +239,9 @@ class HONTree():
         self.__get_divergences_helper(self.root, divergences)
         result = [str(node) + ',' + '{:.6f}'.format(d) for node, d in divergences.items()]
         if otf_name:
-            with open(otf_name, 'w+') as otf: otf.write('\n'.join(result))
+            with open(otf_name, 'w+') as otf: 
+                otf.write('Trajectory,Divergence\n')
+                otf.write('\n'.join(result))
             self.logger.info('Divergences successfully written to {}.'.format(otf_name))
         self.logger.info('Divergence calculations successfully completed.')
         return result
