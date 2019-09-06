@@ -41,6 +41,8 @@ Required arguments must be specified in the correct order and immediately follow
                         this is the character by which GrowHON delimits entities in each input vector
   -do OTFDELIMITER, --otfdelimiter OTFDELIMITER
                         delimiter for output network (char; default " ")
+  -s SKIPPRUNE, --skipprune SKIPPRUNE
+                        whether to skip the prune phase (bool; default False)
   -t TMULT, --tmult TMULT
                         threshold multiplier for determining dependencies (float; default 1.0)
                         higher values mean that dependencies must exceed a higher threshold, so the resulting network will have fewer edges
