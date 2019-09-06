@@ -1125,6 +1125,8 @@ if __name__ == '__main__':
     parser.add_argument('-di', '--infdelimiter', help='delimiter for entities in input vectors', 
                         default=' ')
     parser.add_argument('-do', '--otfdelimiter', help='delimiter for output network', default=' ')
+    parser.add_argument('-s', '--skipprune', help='whether to skip pruning the tree', 
+                        action='store_true', default=False)
     parser.add_argument('-d', '--topdown', help='enable top-down pruning (default is bottom-up)',
                         action='store_true', default=False)
     parser.add_argument('-t', '--tmult', help='threshold multiplier for determining dependencies', 
@@ -1150,6 +1152,7 @@ if __name__ == '__main__':
                  num_cpus=args.numcpus, 
                  log_name=args.logname, 
                  verbose=args.verbose,
+                 prune= not args.skipprune,
                  top_down=args.topdown,
                  threshold_multiplier=args.tmult,
                  seq_grow_log_step=args.logisgrow, 
