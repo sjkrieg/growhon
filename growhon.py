@@ -592,7 +592,6 @@ class HONTree():
         Parameters: 
             node (_HONNode): the node to delete
         """
-        if self.verbose: self.logger.info('deleting node {}'.format(node))
         node.parent.out_deg -= node.in_deg
         node.in_deg = 0
         
@@ -616,11 +615,12 @@ class HONTree():
         # if node.in_deg==0, it was pruned
         # if node.order==0, it is not a sequence destination
         if node.in_deg > 0 and node.order > 0:
-            # if node.parent.in_deg==0, node is an orphan
-            if node.parent.in_deg > 0:
-                edgelist[(node.parent.get_label_full(), self._get_edge_dst(node))] += node.in_deg
-            else:
-                edgelist[self._get_edge_orphan(node)] += node.in_deg
+            # if node is an orphan
+            deg = node.in_deg
+            while (node.in_deg <= 0 or node.orphan) and node.order > 1:
+                if self.verbose: self.logger.info('Trying to adopt {}'.format(str(node)))
+                node = self._get_lord_match(node)
+            edgelist[(node.parent.get_label_full(), self._get_edge_dst(node))] += deg
 
     def _has_dependency(self, hord_node):
         """Decides whether a higher-order node should be preserved.
@@ -719,37 +719,20 @@ class HONTree():
         Returns:
             The label to be included as the edge destination
         """
-        if node.out_deg > 0 and node.in_deg > 0:
+        if node.out_deg > 0 and node.in_deg > 0 and not node.orphan:
             return node.get_label_full()
         else:
+            self.logger.info('we in edge dst boy')
             dst = None
             i = 1
             start_ord = node.order
             # search lower orders until a valid node is found
-            while (not dst or dst.in_deg <= 0 or dst.out_deg <= 0) and (i <= start_ord):
+            while (not dst or dst.in_deg <= 0 or dst.out_deg <= 0 or dst.orphan) and (i <= start_ord):
                 if node.name[i:] in self.nmap:
                     dst = self.nmap[node.name[i:]]
+                self.logger.info('we edge dst loopin')
                 i += 1
             return dst.get_label_full()
-
-    def _get_edge_orphan(self, node):
-        """Used by the extract() method to adopt orphaned edges.
-        
-        Description:
-            During the pruning phase an edge may be "orphaned" in the
-            sense that it has no tree parent, so no flow would reach
-            it in the resulting HON. To preserve the integrity of the
-            HON, these edges are "adopted" by lower order counterparts.
-  
-        Parameters: 
-            node (_HONNode): the orphan who needs to be adopted
-            
-        Returns:
-            The new edge that represents the orphaned node.
-        """
-        while node and (node.parent.in_deg <= 0):
-            node = self._get_lord_match(node)
-        return (node.parent.get_label_full(), self._get_edge_dst(node))
 
     def _get_lord_match(self, hord_node):
         """Used to find a node's lower-order counterpart.
@@ -789,6 +772,14 @@ class HONTree():
         while node != self.root:
             node.marked = True
             node = node.parent
+    
+    def _mark_orphans(self, node):
+        q = deque([n for n in node.children.values()])
+        while q:
+            node = q.popleft()
+            if node.in_deg > 0:
+                node.orphan = True
+            [q.append(n) for n in node.children.values()]
 
     def _prune_bottom_up(self):
         """Prune the tree from the bottom-up, starting with higher orders.
@@ -873,12 +864,11 @@ class HONTree():
         while to_prune:
             for child_label, hord_child in hord_node.children.items():
                 child_to_prune = to_prune.children[child_label]
-                if self.verbose: self.logger.info('Reducing child {} weight by {}'
-                                             .format(str(child_to_prune), hord_child.in_deg))
                 child_to_prune.in_deg -= hord_child.in_deg
                 to_prune.out_deg -= hord_child.in_deg
+                if child_to_prune.in_deg == 0 and child_to_prune.out_deg > 0:
+                    self._mark_orphans(child_to_prune)
             to_prune = self._get_lord_match(to_prune)
-            if self.verbose: self.logger.info('Next prune: {}'.format(str(to_prune)))
         
     # =================================================================
     # END SUPPORTING FUNCTIONS
@@ -909,9 +899,11 @@ class HONTree():
             self.parent = parent
             self.children = {}
             self.marked = False # used during pruning
+            self.orphan = False
             
         def __str__(self):
-            return ('{}[{}:{}]'.format(self.get_label_full(), self.in_deg, self.out_deg))
+            return ('{}[{}:{}]{}'.format(self.get_label_full(), self.in_deg, self.out_deg, 
+                                        ' ORPHAN' if self.orphan else ''))
 
         def dump(self):
             return '------->' * (len(self.name) - 1) + str(self) + '\n'
@@ -1166,4 +1158,4 @@ if __name__ == '__main__':
             otf_divergences.write('\n'.join(t1.get_divergences()))
 # =====================================================================
 # END growhon.py
-# =====================================================================
+# =============================================================================================================================
