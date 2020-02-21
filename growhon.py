@@ -10,7 +10,7 @@ Exposed methods:
 How to use:
     GrowHON can be used in the following ways:
     1)  Executing as a standalone script via:
-        $ python growhon.py input_file output_file max_order
+        $ python growhon.py input_file output_file k
         For additional help with arguments, run:
         $ python growhon.py -h
     2) Importing as a module. See API details below.
@@ -58,15 +58,15 @@ class HONTree():
     """
     
     def __init__(self, 
-                 max_order, 
+                 k, 
                  inf_name=None, 
                  num_cpus=0, 
                  inf_delimiter=' ', 
                  inf_num_prefixes=1, 
                  order_delimiter='|', 
                  prune=True,
-                 top_down=False,
-                 threshold_multiplier=1.0, 
+                 bottom_up=False,
+                 tau=1.0, 
                  min_support=1, 
                  log_name=None, 
                  seq_grow_log_step=1000, 
@@ -82,14 +82,14 @@ class HONTree():
             called and prune==True, it then calls prune().
         
         Parameters:
-            max_order (int): specifies the max order of the HON
+            k (int): specifies the max order of the HON
             inf_name (str or None): input file, call grow() if provided
             num_cpus (int): specifies the number of worker processes
             inf_delimiter (char): delimiting char for input vectors
             inf_num_prefixes (int): skip this many items in each vector
             order_delimiter (char): delimiter for higher orders
             prune (bool): whether to call prune() during init()
-            threshold_multiplier (float): multiplier for KLD in prune()
+            tau (float): multiplier for KLD in prune()
             min_support (int): min frequency for higher order sequences
             log_name (str or None): where to write log output
             seq_grow_log_step (int): heartbeat interval for logging
@@ -105,7 +105,7 @@ class HONTree():
         self.logger.info('Initializing GrowHON on CPU {}'.format(cpuinfo.get_cpu_info()['brand']))
         # root is essentially a dummy node
         self.root = self._HONNode(tuple())
-        self.max_order = max_order
+        self.k = k
         self.nmap = defaultdict(int)
         self.inf_delimiter = inf_delimiter
         self.inf_num_prefixes = inf_num_prefixes
@@ -114,7 +114,7 @@ class HONTree():
         self.prune_log_interval = prune_log_interval
         self.min_support = min_support
         self._HONNode.order_delimiter = order_delimiter
-        self.threshold_multiplier = threshold_multiplier
+        self.tau = tau
         self.verbose = verbose
 
         self.num_cpus = num_cpus if num_cpus else cpu_count()
@@ -125,7 +125,7 @@ class HONTree():
         if inf_name: 
             self.grow(inf_name)
             if prune: 
-                self.prune(top_down)
+                self.prune(bottom_up)
 
     # =================================================================
     # BEGIN EXPOSED FUNCTIONS FOR GROWING, PRUNING, AND EXTRACTING
@@ -154,7 +154,7 @@ class HONTree():
         if inf_num_prefixes: self.inf_num_prefixes = inf_num_prefixes
         
         self.logger.info('Growing tree with {} and max order {}...'.format(str(self.num_cpus) 
-                    + ' worker' + ('s' if self.num_cpus > 1 else ''), self.max_order))
+                    + ' worker' + ('s' if self.num_cpus > 1 else ''), self.k))
         if self.num_cpus > 1:
             self._grow_parallel(inf_name) 
         else:
@@ -162,7 +162,7 @@ class HONTree():
         self.logger.info('Growing successfully completed!')
         if self.verbose: self.logger.info('Tree dump:\n{}'.format(self))
 
-    def prune(self, top_down=False, threshold_multiplier=None, min_support=None):
+    def prune(self, bottom_up=False, tau=None, min_support=None):
         """Uses statistical methods to prune the grown HONTree.
         
         Description:
@@ -174,17 +174,17 @@ class HONTree():
             
         Parameters:
             bottom_up (bool): perform pruning on bottom levels first
-            threshold_multiplier (float): multiplier for KLD threshold
+            tau (float): multiplier for KLD threshold
             min_support (int): min frequency for higher order sequences
         
         Returns:
             None
         """
         # reassign parameters if they were passed explicitly
-        if threshold_multiplier: self.threshold_multiplier = threshold_multiplier
+        if tau: self.tau = tau
         if min_support: self.min_support = min_support
 
-        self._prune_top_down() if top_down else self._prune_bottom_up()
+        self._prune_bottom_up() if bottom_up else self._prune_top_down()
         if self.verbose: self.logger.info('Tree dump:\n{}'.format(self))
     
     def extract(self, otf_name=None, delimiter=' '):
@@ -274,7 +274,7 @@ class HONTree():
         else:
             child = self._HONNode(parent.name + (child_label,), parent)
             parent.children[child_label] = child
-            if child.order < self.max_order:
+            if child.order < self.k:
                 self.nmap[child.name] = child
         parent.out_deg += 1
         parent.out_freq += 1
@@ -307,7 +307,7 @@ class HONTree():
         
         Description:
             This method processes a single input vector by generating
-            all sequential combinations up to length max_order. It
+            all sequential combinations up to length k. It
             does include the "tail" of the sequence, meaning the
             sequences at the very end of the vector which may have
             a shorter length. It passes each sequence to the _add_child
@@ -319,16 +319,16 @@ class HONTree():
         Returns:
             None
         """
-        # we build the tree 1 level higher than max_order
-        # so max_order + 1 is required
-        q = deque(maxlen = self.max_order+1)
+        # we build the tree 1 level higher than k
+        # so k + 1 is required
+        q = deque(maxlen = self.k+1)
         vec = vec.strip().split(self.inf_delimiter)[self.inf_num_prefixes:]
         # prime the queue
-        # e.g. we have line=='1 2 3 4 5' && max_order==2 -> q=[1,2,3]
-        for e in vec[:self.max_order+1]:
+        # e.g. we have line=='1 2 3 4 5' && k==2 -> q=[1,2,3]
+        for e in vec[:self.k+1]:
             q.append(e)
         # loop through the rest of the sequence
-        for e in vec[self.max_order+1:]:
+        for e in vec[self.k+1:]:
             # for each combination, add the sequence to the tree
             # e.g. q==[1,2,3]
             #   -> insert 1 as child of root
@@ -416,7 +416,7 @@ class HONTree():
                     .format(len(inf_partitions)))
         # create 1 worker for each partition
         # this dict is used to map ray actor ID to worker ID as int
-        workers = {_SMap.remote(self.max_order, 
+        workers = {_SMap.remote(self.k, 
                                inf_delimiter=self.inf_delimiter, 
                                inf_num_prefixes=self.inf_num_prefixes, 
                                log_interval=self.par_grow_log_interval
@@ -690,7 +690,7 @@ class HONTree():
         Returns:
             The threshold the node's KLD must exceed to be preserved.
         """
-        return self.threshold_multiplier * (1 + hord_node.order) / log(1 + hord_node.in_freq, 2)
+        return self.tau * (1 + hord_node.order) / log(1 + hord_node.in_freq, 2)
 
     def __get_divergences_helper(self, node, divergences):
         """Recursive helper for get_divergences().
@@ -704,7 +704,7 @@ class HONTree():
         """
         for child in node.children.values():
             self.__get_divergences_helper(child, divergences)
-        if node.order < self.max_order and node.order > 0:
+        if node.order < self.k and node.order > 0:
             divergences['->'.join([str(n) for n in node.name])] = self._get_divergence(node)
 
     def _get_lord_match(self, hord_node):
@@ -764,12 +764,12 @@ class HONTree():
                 node.orphan = True
             self._mark_orphans([c for c in node.children.values()])
 
-    def _prune_bottom_up(self):
-        """Prune the tree from the bottom-up, starting with higher orders.
+    def _prune_top_down(self):
+        """Prune the tree from the top down, starting with higher orders.
         
         Description:
-            Bottom-up pruning is the default because it is more comprehensive
-            than top-down. Its accuracy with respect to top-down pruning is 
+            Top-down pruning is the default because it is more comprehensive
+            than bottom-up. Its accuracy with respect to top-down pruning is 
             still unverified, so it may be worthwhile to try both.
             
         Parameters: 
@@ -778,10 +778,9 @@ class HONTree():
         Returns:
             None
         """
-        self.logger.info('Pruning tree bottom-up...')
-        # pruning is performed in bottom-up fashion
+        self.logger.info('Pruning tree top-down...')
         # starting at the second-to-last level of the tree
-        for order in range(self.max_order-1, 0, -1):
+        for order in range(self.k-1, 0, -1):
             # getting nodes from nmap is faster than tree traversal
             cur_order = [n for n in self.nmap.values() if n.order == order]
             log_step = ceil(self.prune_log_interval * len(cur_order))
@@ -806,12 +805,12 @@ class HONTree():
             self.logger.info('Pruning successfully completed on order {}.'.format(order + 1)) 
         self.logger.info('Pruning successfully completed all orders!') 
     
-    def _prune_top_down(self):
-        """Prune the tree top-down.
+    def _prune_bottom_up(self):
+        """Prune the tree bottom_up.
         
         Description:
-            Top-down pruning will be slightly faster and most likely result in
-            a smaller network than bottom-up pruning. This is because lower
+            bottom_up pruning will be slightly faster and most likely result in
+            a smaller network than top-down pruning. This is because lower
             orders are pruned first, so if a dependency exists downstream
             from a non-dependency, the algorithm will never find it.
             
@@ -821,8 +820,30 @@ class HONTree():
         Returns:
             None
         """
-        self.logger.info('Pruning tree top-down is not supported in this implementation.')
-        self._prune_bottom_up()
+        self.logger.info('Pruning tree bottom-up...')
+        # starting at the third level of the tree
+        for order in range(1, self.k):
+            # getting nodes from nmap is faster than tree traversal
+            cur_order = [n for n in self.nmap.values() if n.order == order]
+            log_step = ceil(self.prune_log_interval * len(cur_order))
+            self.logger.info('Pruning {:,d} nodes from order {}...'
+                             .format(len(cur_order), order + 1))
+            for i, node in enumerate(cur_order):
+                # add an update to the log every so often
+                if not i % log_step:
+                    self.logger.info('Pruning node {:,d}/{:,d} ({}%) in order {}...'
+                                .format(i, len(cur_order), int(i*100/len(cur_order)), order + 1))
+                # the two criteria for preserving a higher-order node are if
+                # 1) it has a higher-order descendent (to preserve flow)
+                # or
+                # 2) it has a dependency, as indicate by its relative entropy
+                if n.in_deg and self._has_dependency(node):
+                    # prune the lord_rule's children by hord weights
+                    self._prune_lord_children(node)
+                else:
+                    for c in node.children.values(): self._delete_node(c)
+            self.logger.info('Pruning successfully completed on order {}.'.format(order + 1)) 
+        self.logger.info('Pruning successfully completed all orders!') 
 
     def _prune_lord_children(self, hord_node):
         """Used to prune lower-order child nodes.
@@ -943,9 +964,9 @@ if ray_available:
             Each worker creates one smap, a dict containing all
             sequences and frequencies as key, value pairs.
         """
-        def __init__(self, max_order, inf_num_prefixes=1, inf_delimiter=' ', log_interval=0.2):
+        def __init__(self, k, inf_num_prefixes=1, inf_delimiter=' ', log_interval=0.2):
             self._send_signal('Initializing on CPU {}'.format(cpuinfo.get_cpu_info()['brand']))
-            self.max_order = max_order
+            self.k = k
             self.inf_num_prefixes = inf_num_prefixes
             self.inf_delimiter = inf_delimiter
             self.log_interval = log_interval
@@ -953,7 +974,7 @@ if ray_available:
 
         def __str__(self):
             return ('\n'.join(['{0: >{1}} : {2}'.format(str(node), 
-                    (8 * self.max_order) + 8, deg) for node, deg in sorted(self.smap.items())]))
+                    (8 * self.k) + 8, deg) for node, deg in sorted(self.smap.items())]))
 
         # to_absorb_id is a list of object ids
         def absorb_smap(self, to_absorb):
@@ -1049,7 +1070,7 @@ if ray_available:
     
             Description:
                 This method accepts a single input vector and
-                generates sequences with length max_order. It functions
+                generates sequences with length k. It functions
                 like HONTree._grow_vector, but instead of creating tree
                 nodes it just counts occurrences.
             
@@ -1059,13 +1080,13 @@ if ray_available:
             Returns:
                 None (sequences are modified in place in self.smap)
             """
-            q = deque(maxlen = self.max_order+1)
+            q = deque(maxlen = self.k+1)
             
             vec = vec.strip().split(self.inf_delimiter)[self.inf_num_prefixes:]
             # prime the queue with first entities in the sequence
-            for e in vec[:self.max_order+1]:
+            for e in vec[:self.k+1]:
                 q.append(e)
-            for e in vec[self.max_order+1:]:
+            for e in vec[self.k+1:]:
                 for i in range(1, len(q) + 1):
                     self.smap[tuple([int(node) for node in islice(q, i)])] += 1
                 q.popleft()
@@ -1102,9 +1123,9 @@ if __name__ == '__main__':
     parser.add_argument('-do', '--otfdelimiter', help='delimiter for output network', default=' ')
     parser.add_argument('-s', '--skipprune', help='whether to skip pruning the tree', 
                         action='store_true', default=False)
-    parser.add_argument('-d', '--topdown', help='enable top-down pruning (default is bottom-up)',
+    parser.add_argument('-b', '--bottomup', help='enable bottom-up pruning (default is top-down)',
                         action='store_true', default=False)
-    parser.add_argument('-t', '--tmult', help='threshold multiplier for determining dependencies', 
+    parser.add_argument('-t', '--tau', help='threshold multiplier for determining dependencies', 
                         type=float, default=1.0)
     parser.add_argument('-e', '--dotfname', help='destination path + file for divergences', 
                         default=None)
@@ -1128,8 +1149,8 @@ if __name__ == '__main__':
                  log_name=args.logname, 
                  verbose=args.verbose,
                  prune= not args.skipprune,
-                 top_down=args.topdown,
-                 threshold_multiplier=args.tmult,
+                 bottom_up=args.bottomup,
+                 tau=args.tau,
                  seq_grow_log_step=args.logisgrow, 
                  par_grow_log_interval=args.logipgrow, 
                  prune_log_interval=args.logiprune, 
