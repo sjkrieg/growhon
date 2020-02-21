@@ -22,7 +22,7 @@ python growhon.py airport_sample_sequences.txt airport_sample_hon.txt 3
 ```
   infname               source path + file name
   otfname               destination path + file name
-  maxorder              max order to use in growing the HON
+  k                     max order to use in growing the HON
 ```
 
 Required arguments must be specified in the correct order and immediately following the python command.
@@ -43,7 +43,7 @@ Required arguments must be specified in the correct order and immediately follow
                         delimiter for output network (char; default " ")
   -s SKIPPRUNE, --skipprune SKIPPRUNE
                         whether to skip the prune phase (bool; default False)
-  -t tau, --tau TAU
+  -t TAU, --tau TAU
                         threshold multiplier for determining dependencies (float; default 1.0)
                         higher values mean that dependencies must exceed a higher threshold, so the resulting network will have fewer edges
   -e DOTFNAME, --dotfname DOTFNAME
