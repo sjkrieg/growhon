@@ -797,7 +797,7 @@ class HONTree():
                 # 2) it has a dependency, as indicate by its relative entropy
                 if node.marked or (self._has_dependency(node)):
                     # prune the lord_rule's children by hord weights
-                    self._prune_lord_children(node)
+                    # self._prune_lord_children(node)
                     # marking ancestors helps prevent orphaning
                     self._mark_ancestors(node)
                 else:
