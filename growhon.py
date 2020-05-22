@@ -65,7 +65,7 @@ class HONTree():
                  inf_num_prefixes=1, 
                  order_delimiter='|', 
                  prune=True,
-                 bottom_up=False,
+                 prune_reverse=False,
                  tau=1.0, 
                  min_support=1, 
                  log_name=None, 
@@ -125,7 +125,7 @@ class HONTree():
         if inf_name: 
             self.grow(inf_name)
             if prune: 
-                self.prune(bottom_up)
+                self.prune(prune_reverse)
 
     # =================================================================
     # BEGIN EXPOSED FUNCTIONS FOR GROWING, PRUNING, AND EXTRACTING
@@ -162,7 +162,7 @@ class HONTree():
         self.logger.info('Growing successfully completed!')
         if self.verbose: self.logger.info('Tree dump:\n{}'.format(self))
 
-    def prune(self, bottom_up=False, tau=None, min_support=None):
+    def prune(self, prune_reverse=False, tau=None, min_support=None):
         """Uses statistical methods to prune the grown HONTree.
         
         Description:
@@ -173,7 +173,7 @@ class HONTree():
             have their in-degrees reduced, possibly to 0.
             
         Parameters:
-            bottom_up (bool): perform pruning on bottom levels first
+            prune_reverse (bool): perform pruning on bottom levels first
             tau (float): multiplier for KLD threshold
             min_support (int): min frequency for higher order sequences
         
@@ -184,7 +184,7 @@ class HONTree():
         if tau: self.tau = tau
         if min_support: self.min_support = min_support
 
-        self._prune_bottom_up() if bottom_up else self._prune_top_down()
+        self._prune_reverse() if prune_reverse else self._prune()
         if self.verbose: self.logger.info('Tree dump:\n{}'.format(self))
     
     def extract(self, otf_name=None, delimiter=' '):
@@ -763,8 +763,47 @@ class HONTree():
             if node.in_deg > 0:
                 node.orphan = True
             self._mark_orphans([c for c in node.children.values()])
+            
+    def _prune(self):
+        """Prune the tree in normal sequence.
+        
+        Description:
+            Normal pruning begins at the first order and works its way to 
+            higher orders. It only considers a higher-order dependency if
+            its predecessors also have dependencies.
+            
+        Parameters: 
+            None
+            
+        Returns:
+            None
+        """
+        self.logger.info('Pruning tree in normal sequence...')
+        # starting at the third level of the tree
+        for order in range(1, self.k):
+            # getting nodes from nmap is faster than tree traversal
+            cur_order = [n for n in self.nmap.values() if n.order == order]
+            log_step = ceil(self.prune_log_interval * len(cur_order))
+            self.logger.info('Pruning {:,d} nodes from order {}...'
+                             .format(len(cur_order), order + 1))
+            for i, node in enumerate(cur_order):
+                # add an update to the log every so often
+                if not i % log_step:
+                    self.logger.info('Pruning node {:,d}/{:,d} ({}%) in order {}...'
+                                .format(i, len(cur_order), int(i*100/len(cur_order)), order + 1))
+                # the two criteria for preserving a higher-order node are if
+                # 1) it has a higher-order descendent (to preserve flow)
+                # or
+                # 2) it has a dependency, as indicate by its relative entropy
+                if n.in_deg and self._has_dependency(node):
+                    # prune the lord_rule's children by hord weights
+                    self._prune_lord_children(node)
+                else:
+                    for c in node.children.values(): self._delete_node(c)
+            self.logger.info('Pruning successfully completed on order {}.'.format(order + 1)) 
+        self.logger.info('Pruning successfully completed all orders!') 
 
-    def _prune_top_down(self):
+    def _prune_reverse(self):
         """Prune the tree from the top down, starting with higher orders.
         
         Description:
@@ -778,7 +817,7 @@ class HONTree():
         Returns:
             None
         """
-        self.logger.info('Pruning tree top-down...')
+        self.logger.info('Pruning tree in reverse...')
         # starting at the second-to-last level of the tree
         for order in range(self.k-1, 0, -1):
             # getting nodes from nmap is faster than tree traversal
@@ -805,46 +844,6 @@ class HONTree():
             self.logger.info('Pruning successfully completed on order {}.'.format(order + 1)) 
         self.logger.info('Pruning successfully completed all orders!') 
     
-    def _prune_bottom_up(self):
-        """Prune the tree bottom_up.
-        
-        Description:
-            bottom_up pruning will be slightly faster and most likely result in
-            a smaller network than top-down pruning. This is because lower
-            orders are pruned first, so if a dependency exists downstream
-            from a non-dependency, the algorithm will never find it.
-            
-        Parameters: 
-            None
-            
-        Returns:
-            None
-        """
-        self.logger.info('Pruning tree bottom-up...')
-        # starting at the third level of the tree
-        for order in range(1, self.k):
-            # getting nodes from nmap is faster than tree traversal
-            cur_order = [n for n in self.nmap.values() if n.order == order]
-            log_step = ceil(self.prune_log_interval * len(cur_order))
-            self.logger.info('Pruning {:,d} nodes from order {}...'
-                             .format(len(cur_order), order + 1))
-            for i, node in enumerate(cur_order):
-                # add an update to the log every so often
-                if not i % log_step:
-                    self.logger.info('Pruning node {:,d}/{:,d} ({}%) in order {}...'
-                                .format(i, len(cur_order), int(i*100/len(cur_order)), order + 1))
-                # the two criteria for preserving a higher-order node are if
-                # 1) it has a higher-order descendent (to preserve flow)
-                # or
-                # 2) it has a dependency, as indicate by its relative entropy
-                if n.in_deg and self._has_dependency(node):
-                    # prune the lord_rule's children by hord weights
-                    self._prune_lord_children(node)
-                else:
-                    for c in node.children.values(): self._delete_node(c)
-            self.logger.info('Pruning successfully completed on order {}.'.format(order + 1)) 
-        self.logger.info('Pruning successfully completed all orders!') 
-
     def _prune_lord_children(self, hord_node):
         """Used to prune lower-order child nodes.
         
@@ -1123,7 +1122,7 @@ if __name__ == '__main__':
     parser.add_argument('-do', '--otfdelimiter', help='delimiter for output network', default=' ')
     parser.add_argument('-s', '--skipprune', help='whether to skip pruning the tree', 
                         action='store_true', default=False)
-    parser.add_argument('-b', '--bottomup', help='enable bottom-up pruning (default is top-down)',
+    parser.add_argument('-r', '--reverseprune', help='enable reverse pruning',
                         action='store_true', default=False)
     parser.add_argument('-t', '--tau', help='threshold multiplier for determining dependencies', 
                         type=float, default=1.0)
@@ -1149,7 +1148,7 @@ if __name__ == '__main__':
                  log_name=args.logname, 
                  verbose=args.verbose,
                  prune= not args.skipprune,
-                 bottom_up=args.bottomup,
+                 prune_reverse=args.reverseprune,
                  tau=args.tau,
                  seq_grow_log_step=args.logisgrow, 
                  par_grow_log_interval=args.logipgrow, 
