@@ -2,7 +2,7 @@
 """Module to generate a higher-order network (HON).
 
 Exposed methods:
-    grow(): grows a tree from a list of input vectors
+    grow(): grows a tree from a list of input sequences
     prune(): prunes the insignificant sequences
     extract(): converts the tree into a weighted edgelist
     get_divergences(): returns a list of all divergences
@@ -24,6 +24,7 @@ from itertools import islice
 from math import log, ceil
 from multiprocessing import cpu_count
 import numpy as np
+import sys
 # =================================================================
 # =================================================================
 # MODULES REQUIRED FOR PARALLELIZATION
@@ -33,8 +34,6 @@ from importlib.util import find_spec
 ray_available = find_spec('ray')
 if ray_available:
     import ray
-    # import full sys or SMap triggers a pickling error on version_info
-    import sys
     from threading import Thread
 # =================================================================
 # =================================================================
@@ -65,14 +64,15 @@ class HONTree():
                  inf_num_prefixes=1, 
                  order_delimiter='|', 
                  prune=True,
-                 prune_reverse=False,
+                 bottom_up=False,
                  tau=1.0, 
                  min_support=1, 
                  log_name=None, 
                  seq_grow_log_step=1000, 
                  par_grow_log_interval=0.2, 
                  prune_log_interval=0.2, 
-                 verbose=False):
+                 verbose=False,
+                 dotf_name=None):
         """Init method for GrowHON.
         
         Description:
@@ -85,8 +85,8 @@ class HONTree():
             k (int): specifies the max order of the HON
             inf_name (str or None): input file, call grow() if provided
             num_cpus (int): specifies the number of worker processes
-            inf_delimiter (char): delimiting char for input vectors
-            inf_num_prefixes (int): skip this many items in each vector
+            inf_delimiter (char): delimiting char for input sequences
+            inf_num_prefixes (int): skip this many items in each sequence
             order_delimiter (char): delimiter for higher orders
             prune (bool): whether to call prune() during init()
             tau (float): multiplier for KLD in prune()
@@ -102,7 +102,11 @@ class HONTree():
                             format='%(levelname)-8s  %(asctime)23s  ' + 
                             '%(runtime)10s  %(rss_size)6dMB  %(message)s')
         self.logger = logging.LoggerAdapter(logging.getLogger(), self._LogMap())
-        self.logger.info('Initializing GrowHON on CPU {}'.format(cpuinfo.get_cpu_info()['brand']))
+        try:
+            self.logger.info('Initializing GrowHON on CPU {} (PID {})'
+                            .format(cpuinfo.get_cpu_info()['brand'], getpid()))
+        except:
+            self.logger.info('Initializing GrowHON; could not detect CPU info.')
         # root is essentially a dummy node
         self.root = self._HONNode(tuple())
         self.k = k
@@ -124,8 +128,12 @@ class HONTree():
             self.num_cpus = 1
         if inf_name: 
             self.grow(inf_name)
+            if dotf_name:
+                self.logger.info('Dumping divergences...')
+                with open(dotf_name, 'w+') as otf_divergences: 
+                    otf_divergences.write('\n'.join(self.get_divergences()))
             if prune: 
-                self.prune(prune_reverse)
+                self.prune(bottom_up)
 
     # =================================================================
     # BEGIN EXPOSED FUNCTIONS FOR GROWING, PRUNING, AND EXTRACTING
@@ -142,8 +150,8 @@ class HONTree():
         Parameters: 
             inf_name (str): input file, required
             num_cpus (int): number of worker processes to initiate
-            inf_delimiter (char): delimiter for input vectors
-            inf_num_prefixes (char): items to skip in input vectors
+            inf_delimiter (char): delimiter for input sequences
+            inf_num_prefixes (char): items to skip in input sequences
         
         Returns:
             None
@@ -162,7 +170,7 @@ class HONTree():
         self.logger.info('Growing successfully completed!')
         if self.verbose: self.logger.info('Tree dump:\n{}'.format(self))
 
-    def prune(self, prune_reverse=False, tau=None, min_support=None):
+    def prune(self, bottom_up=False, tau=None, min_support=None):
         """Uses statistical methods to prune the grown HONTree.
         
         Description:
@@ -173,7 +181,7 @@ class HONTree():
             have their in-degrees reduced, possibly to 0.
             
         Parameters:
-            prune_reverse (bool): perform pruning on bottom levels first
+            bottom_up (bool): perform pruning on bottom levels first
             tau (float): multiplier for KLD threshold
             min_support (int): min frequency for higher order sequences
         
@@ -184,7 +192,7 @@ class HONTree():
         if tau: self.tau = tau
         if min_support: self.min_support = min_support
 
-        self._prune_reverse() if prune_reverse else self._prune()
+        self._prune_bottom_up() if bottom_up else self._prune_top_down()
         if self.verbose: self.logger.info('Tree dump:\n{}'.format(self))
     
     def extract(self, otf_name=None, delimiter=' '):
@@ -206,23 +214,30 @@ class HONTree():
         """
         self.logger.info('Extracting edgelist...')
         # using a shared dictionary saves time on merging return values
-        edgelist = defaultdict(int)
+        edgelist = {}
         # __extract_helper modifies edgelist in place
-        self.__extract_helper(self.root, edgelist)
-        self.logger.info('Extracted {:,d} edges. Formatting...'.format(len(edgelist.keys())))
+        log_step = ceil(self.prune_log_interval * len(self.root.children))
+        for i, c in enumerate(self.root.children.values()):
+            if not i % log_step:
+                self.logger.info('Extracting {}/{} branches...'.format(i, len(self.root.children)))
+            self.__extract_helper(c, edgelist)
+        self.logger.info('Extracted {:,d} edges. Formatting...'.format(len(edgelist)))
         
         # edgelist is structured as (u, v): w, where
         # u is the source node, v is the destination node
         # and w is the edge weight
-        result = [edge[0] + delimiter + edge[1] + delimiter 
+        edgelist = [edge[0] + delimiter + edge[1] + delimiter 
                   + str(weight) for edge, weight in edgelist.items()]
 
         if otf_name:
-            with open(otf_name, 'w+') as otf: otf.write('\n'.join(result))
-            self.logger.info('Edgelist successfully written to {}.'.format(otf_name))
-        self.logger.info('Edgelist extraction successfully completed.')
-        if not otf_name: 
-            return result
+            try:
+                with open(otf_name, 'w+') as otf: otf.write('\n'.join(edgelist))
+                self.logger.info('Edgelist successfully written to {}.'.format(otf_name))
+            except:
+                self.logger.info('Exception: Could not open {}.'.format(otf_name))
+        else:
+            #return edgelist 
+            self.logger.info('Skipping edgelist write.')
     
     def get_divergences(self, otf_name=None):
         """Measures the KLD for all nodes in the tree. Not used
@@ -235,9 +250,9 @@ class HONTree():
             A list of node labels and their KLD values.
         """
         self.logger.info('Calculating divergences...')
-        divergences = defaultdict(float)
+        divergences = {}
         self.__get_divergences_helper(self.root, divergences)
-        result = [str(node) + ',' + '{:.6f}'.format(d) for node, d in divergences.items()]
+        result = [str(node) + ',' + '{:.6f},{:.6f}'.format(d[0],d[1]) for node, d in divergences.items()]
         if otf_name:
             with open(otf_name, 'w+') as otf: 
                 otf.write('Trajectory,Divergence\n')
@@ -277,9 +292,7 @@ class HONTree():
             if child.order < self.k:
                 self.nmap[child.name] = child
         parent.out_deg += 1
-        parent.out_freq += 1
         child.in_deg += 1
-        child.in_freq += 1
         return child
 
     def _grow_sequential(self, inf_name):
@@ -287,7 +300,7 @@ class HONTree():
         
         Description:
             This method iterates over each line in an input file,
-            and calls the _grow_vector method for each one.
+            and calls the _grow_sequence method for each one.
 
         Parameters:
             inf_name (str): the input file
@@ -299,22 +312,22 @@ class HONTree():
         with open(inf_name,'r') as inf:
             for i, line in enumerate(inf):
                 if not i % self.seq_grow_log_step: 
-                    self.logger.info('Processing input line {}...'.format(i))
-                self._grow_vector(line)
+                    self.logger.info('Processing input line {:,d}...'.format(i))
+                self._grow_sequence(line)
 
-    def _grow_vector(self, vec):
-        """Process a single vector from the input.
+    def _grow_sequence(self, seq):
+        """Process a single sequence from the input.
         
         Description:
-            This method processes a single input vector by generating
+            This method processes a single input sequence by generating
             all sequential combinations up to length k. It
             does include the "tail" of the sequence, meaning the
-            sequences at the very end of the vector which may have
+            sequences at the very end of the sequence which may have
             a shorter length. It passes each sequence to the _add_child
             method to insert into the tree.
 
         Parameters: 
-            line (str): an input vector
+            line (str): an input sequence
             
         Returns:
             None
@@ -322,13 +335,13 @@ class HONTree():
         # we build the tree 1 level higher than k
         # so k + 1 is required
         q = deque(maxlen = self.k+1)
-        vec = vec.strip().split(self.inf_delimiter)[self.inf_num_prefixes:]
+        seq = seq.strip().split(self.inf_delimiter)[self.inf_num_prefixes:]
         # prime the queue
         # e.g. we have line=='1 2 3 4 5' && k==2 -> q=[1,2,3]
-        for e in vec[:self.k+1]:
+        for e in seq[:self.k+1]:
             q.append(e)
         # loop through the rest of the sequence
-        for e in vec[self.k+1:]:
+        for e in seq[self.k+1:]:
             # for each combination, add the sequence to the tree
             # e.g. q==[1,2,3]
             #   -> insert 1 as child of root
@@ -342,7 +355,7 @@ class HONTree():
             q.popleft()
             q.append(e)
         # add the "tail" of the sequence
-        # this could be ommitted if you want to truncate the vectors
+        # this could be ommitted if you want to truncate the sequences
         while q:
             cur_parent = self.root
             for node in q:
@@ -404,14 +417,15 @@ class HONTree():
         Returns:
             None (tree is grown in-place and accessed from the root)
         """
+        self.logger.info('MGR: Manager initialized.')
         self.logger.info('MGR: Partitioning input file for {} workers...'.format(self.num_cpus))
         inf_partitions = self._get_partitions(inf_name)
         self.logger.info('MGR: Partitioning successfully completed. Partition sizes: {}'
                     .format([len(p) for p in inf_partitions]))
         self.logger.info('MGR: Initializing ray...')
         if not ray.is_initialized():
-            ray.init(logging_level=50, logging_format='%(levelname)-8s  %(asctime)23s' + 
-                                                      (' ' * 24) + 'Ray: %(message)s')
+            ray.init(num_cpus=self.num_cpus, logging_level=50, logging_format='%(levelname)-8s' +  
+                        '  %(asctime)23s' + (' ' * 24) + 'Ray: %(message)s')
         self.logger.info('MGR: Ray successfully initialized. Creating jobs for {} workers...'
                     .format(len(inf_partitions)))
         # create 1 worker for each partition
@@ -428,11 +442,10 @@ class HONTree():
         listener = Thread(target=self._signal_listener, args=(jobs, workers), daemon=True)
         listener.start()
         grower = None
-        
         # continue to run until all the jobs have completed
         while jobs:
             active_jobs = list(jobs.keys())
-            self.logger.info('MGR: Waiting to hear from a worker...')
+            self.logger.info('MGR: Waiting to hear from {} worker(s)...'.format(len(active_jobs)))
             # block until there is at least 1 result available
             # this call will only return 1 completed job id
             ready_ids, nready_ids = ray.wait(active_jobs, num_returns=1)
@@ -452,15 +465,16 @@ class HONTree():
                     # running simultaneously will not improve runtime
                     # best scenario is to block
                     if grower and grower.is_alive():
-                        self.logger.info('MGR: Smap is ready from worker {}, but driver is busy ' 
-                                    + 'growing - blocking...'.format(workers[jobs[ready_ids[0]]]))
+                        self.logger.info('MGR: Smap is ready from worker {}'
+                                            .format(workers[jobs[ready_ids[0]]])
+                                            + ' but driver is busy growing - blocking...')
                         while grower.is_alive() and len(ready_ids) < 2:
                             ready_ids, nready_ids = ray.wait(active_jobs, 
                                                              num_returns=min(2, len(active_jobs)), 
                                                              timeout=0.0)
                     else:
                         self.logger.info('MGR: Smap is ready from worker {} - receiving...'
-                                    .format(workers[jobs[ready_ids[0]]]))
+                                            .format(workers[jobs[ready_ids[0]]]))
                         # read the smap from the ray object store
                         smap = ray.get(ready_ids[0])
                         self.logger.info('MGR: Received smap from worker {} - growing tree ' 
@@ -472,10 +486,9 @@ class HONTree():
                         grower.start()
                         jobs.pop(ready_ids[0])
                 elif len(ready_ids) > 1:
-                    self.logger.info('MGR: Smaps are ready from workers {} and {} - combining on '
-                                 + 'worker {}...'
-                                .format(workers[jobs[ready_ids[0]]], workers[jobs[ready_ids[1]]], 
-                                        workers[jobs[ready_ids[1]]]))
+                    self.logger.info('MGR: Smaps are ready from workers {} and {}'
+                                .format(workers[jobs[ready_ids[0]]], workers[jobs[ready_ids[1]]]) 
+                                + '- combining on worker {}...'.format(workers[jobs[ready_ids[1]]]))
                     # the most recently finished worker is most likely
                     # to have a larger smap, so we run on that worker
                     # to potentially save time on serialization
@@ -509,7 +522,7 @@ class HONTree():
         Returns:
             None (tree is grown in-place and accessed from the root)
         """
-        log_step = self.par_grow_log_interval * len(incoming_smap)
+        log_step = int(self.par_grow_log_interval * len(incoming_smap))
         for i, sequence in enumerate(incoming_smap):
             if not i % log_step:
                 self.logger.info('MGR: Growing sequence {:,d}/{:,d}.'.format(i, len(incoming_smap)))
@@ -525,17 +538,15 @@ class HONTree():
             if node in self.nmap:
                 obj = self.nmap[node]
                 obj.in_deg += deg
-                obj.in_freq += deg
             else:
                 # the parent MUST already exist before inserting child
                 # i.e. if the smap is not sorted, this will fail
                 obj = self._HONNode(name=node, 
                               parent=self.nmap[node[:-1]] if len(node) > 1 else self.root)
-                obj.in_deg = obj.in_freq = deg
+                obj.in_deg = deg
                 obj.parent.children[node[-1]] = obj
                 self.nmap[node] = obj
             obj.parent.out_deg += deg
-            obj.parent.out_freq += deg
         self.logger.info('MGR: Growing from smap successfully completed.')
 
     def _signal_listener(self, jobs, workers):
@@ -562,7 +573,8 @@ class HONTree():
         # cleanest way to terminate this thread seems to be
         # waiting for ray to close the signal socket
         except:
-            pass
+            self.logger.info('Signal listener failed; the current verison of ray'
+                             + ' may not support signaling (0.8.3+)')
     
     # =================================================================
     # END PARALLEL FUNCTIONS
@@ -583,6 +595,17 @@ class HONTree():
             for child in node.children.values():
                 s += self.__str_helper(child)
             return s
+
+    def _delete_children(self, node):
+        """Reduces the incoming node's in-degree to 0.
+        Also reduces its parent's out-degree by the same number.
+        The node is not deleted from memory.
+  
+        Parameters: 
+            node (_HONNode): the node to delete
+        """
+        node.out_deg = 0
+        for c in node.children.values(): c.in_deg = 0
 
     def _delete_node(self, node):
         """Reduces the incoming node's in-degree to 0.
@@ -610,20 +633,21 @@ class HONTree():
         Returns:
             The label to be included as the edge destination
         """
-        for child in node.children.values():
-            self.__extract_helper(child, edgelist)
         # if node.in_deg==0, it was pruned
         # if node.order==0, it is not a sequence destination
-        if node.in_deg > 0 and node.order > 0:
-            # if node is an orphan
-            deg = node.in_deg
-            while (node.in_deg <= 0 or node.orphan) and node.order > 1:
-                if self.verbose: self.logger.info('Trying to adopt {}'.format(str(node)))
-                node = self._get_lord_match(node)
-            u = node.parent
-            while (node.out_deg <= 0 or node.in_deg <= 0 or node.orphan) and node.order > 0:
-                node = self._get_lord_match(node)
-            edgelist[(u.get_label_full(), node.get_label_full())] += deg
+        if node.in_deg > 0:
+            for child in node.children.values():
+                self.__extract_helper(child, edgelist)
+            if node.order > 0:
+                #while (node.in_deg <= 0 or node.orphan) and node.order > 1:
+                #    if self.verbose: self.logger.info('Trying to adopt {}'.format(str(node)))
+                #    node = self._get_lord_match(node)
+                v = node
+                while v.out_deg == 0 and v.order > 0:
+                    v = self._get_lord_match(v)
+                edgelist[(node.parent.get_label_full(), v.get_label_full())] = node.in_deg
+            
+
 
     def _has_dependency(self, hord_node):
         """Decides whether a higher-order node should be preserved.
@@ -644,24 +668,23 @@ class HONTree():
             True if the higher-order node should be preserved;
             False otherwise
         """
-        if hord_node.in_freq >= self.min_support:
-            divergence = self._get_divergence(hord_node)
-            threshold = self._get_divergence_threshold(hord_node)
-            if self.verbose: 
-                self.logger.info('{} -> {}'
-                            .format(str(hord_node), str([(k, v.in_deg) 
-                            for k, v in hord_node.children.items()])))
-                self.logger.info('{} -> {}'
-                            .format(str(self._get_lord_match(hord_node)), str([(k, v.in_deg)
-                            for k, v in self._get_lord_match(hord_node).children.items()])))
-                self.logger.info('dvrg:{} ; thrs: {}'.format(divergence, threshold))
-                if divergence > threshold:
-                    self.logger.info('{} has a dependency.'.format(str(hord_node)))
-                else:
-                    self.logger.info('{} does not have a dependency.'.format(str(hord_node)))
-                    
-            return (divergence > threshold)
-        else: return False
+        divergence = self._get_divergence(hord_node)
+        threshold = self._get_divergence_threshold(hord_node)
+        """
+        if self.verbose: 
+            self.logger.info('{} -> {}'
+                        .format(str(hord_node), str([(k, v.in_deg) 
+                        for k, v in hord_node.children.items()])))
+            self.logger.info('{} -> {}'
+                        .format(str(self._get_lord_match(hord_node)), str([(k, v.in_deg)
+                        for k, v in self._get_lord_match(hord_node).children.items()])))
+            self.logger.info('dvrg:{} ; thrs: {}'.format(divergence, threshold))
+            if divergence > threshold:
+                self.logger.info('{} has a dependency.'.format(str(hord_node)))
+            else:
+                self.logger.info('{} does not have a dependency.'.format(str(hord_node)))
+        """
+        return (divergence > threshold)
 
     def _get_divergence(self, hord_node):
         """Measures the KLD (relative entropy) of a higher-order node.
@@ -676,9 +699,9 @@ class HONTree():
         lord_node = self._get_lord_match(hord_node)
         divergence = 0.0
         for child_label, child in hord_node.children.items():
-            hord_conf = child.in_freq / hord_node.out_freq
-            divergence += hord_conf * log((hord_conf * lord_node.out_freq)
-                                          / lord_node.children[child_label].in_freq, 2)
+            hord_conf = child.in_deg / hord_node.out_deg
+            divergence += hord_conf * log((hord_conf * lord_node.out_deg)
+                                          / lord_node.children[child_label].in_deg, 2)
         return divergence
 
     def _get_divergence_threshold(self, hord_node):
@@ -690,7 +713,7 @@ class HONTree():
         Returns:
             The threshold the node's KLD must exceed to be preserved.
         """
-        return self.tau * (1 + hord_node.order) / log(1 + hord_node.in_freq, 2)
+        return self.tau * hord_node.order / log(1 + hord_node.in_deg, 2)
 
     def __get_divergences_helper(self, node, divergences):
         """Recursive helper for get_divergences().
@@ -705,7 +728,7 @@ class HONTree():
         for child in node.children.values():
             self.__get_divergences_helper(child, divergences)
         if node.order < self.k and node.order > 0:
-            divergences['->'.join([str(n) for n in node.name])] = self._get_divergence(node)
+            divergences[node.get_label_full()] = (self._get_divergence(node), self._get_divergence_threshold(node))
 
     def _get_lord_match(self, hord_node):
         """Used to find a node's lower-order counterpart.
@@ -763,47 +786,8 @@ class HONTree():
             if node.in_deg > 0:
                 node.orphan = True
             self._mark_orphans([c for c in node.children.values()])
-            
-    def _prune(self):
-        """Prune the tree in normal sequence.
-        
-        Description:
-            Normal pruning begins at the first order and works its way to 
-            higher orders. It only considers a higher-order dependency if
-            its predecessors also have dependencies.
-            
-        Parameters: 
-            None
-            
-        Returns:
-            None
-        """
-        self.logger.info('Pruning tree in normal sequence...')
-        # starting at the third level of the tree
-        for order in range(1, self.k):
-            # getting nodes from nmap is faster than tree traversal
-            cur_order = [n for n in self.nmap.values() if n.order == order]
-            log_step = ceil(self.prune_log_interval * len(cur_order))
-            self.logger.info('Pruning {:,d} nodes from order {}...'
-                             .format(len(cur_order), order + 1))
-            for i, node in enumerate(cur_order):
-                # add an update to the log every so often
-                if not i % log_step:
-                    self.logger.info('Pruning node {:,d}/{:,d} ({}%) in order {}...'
-                                .format(i, len(cur_order), int(i*100/len(cur_order)), order + 1))
-                # the two criteria for preserving a higher-order node are if
-                # 1) it has a higher-order descendent (to preserve flow)
-                # or
-                # 2) it has a dependency, as indicate by its relative entropy
-                if n.in_deg and self._has_dependency(node):
-                    # prune the lord_rule's children by hord weights
-                    self._prune_lord_children(node)
-                else:
-                    for c in node.children.values(): self._delete_node(c)
-            self.logger.info('Pruning successfully completed on order {}.'.format(order + 1)) 
-        self.logger.info('Pruning successfully completed all orders!') 
 
-    def _prune_reverse(self):
+    def _prune_top_down(self):
         """Prune the tree from the top down, starting with higher orders.
         
         Description:
@@ -817,7 +801,7 @@ class HONTree():
         Returns:
             None
         """
-        self.logger.info('Pruning tree in reverse...')
+        self.logger.info('Pruning tree top-down...')
         # starting at the second-to-last level of the tree
         for order in range(self.k-1, 0, -1):
             # getting nodes from nmap is faster than tree traversal
@@ -836,14 +820,33 @@ class HONTree():
                 # 2) it has a dependency, as indicate by its relative entropy
                 if node.marked or (self._has_dependency(node)):
                     # prune the lord_rule's children by hord weights
+                    # NOT USED - seems to result in a sparse and overfit network
                     # self._prune_lord_children(node)
-                    # marking ancestors helps prevent orphaning
-                    self._mark_ancestors(node)
+                    # self._mark_ancestors(node)
+                    node.parent.marked = True
                 else:
-                    for c in node.children.values(): self._delete_node(c)
+                    self._delete_children(node)
             self.logger.info('Pruning successfully completed on order {}.'.format(order + 1)) 
         self.logger.info('Pruning successfully completed all orders!') 
     
+    def _prune_bottom_up(self):
+        """Prune the tree bottom_up.
+        
+        Description:
+            bottom_up pruning will be slightly faster and most likely result in
+            a smaller network than top-down pruning. This is because lower
+            orders are pruned first, so if a dependency exists downstream
+            from a non-dependency, the algorithm will never find it.
+            
+        Parameters: 
+            None
+            
+        Returns:
+            None
+        """
+        # not implemented
+        pass
+
     def _prune_lord_children(self, hord_node):
         """Used to prune lower-order child nodes.
         
@@ -897,16 +900,12 @@ class HONTree():
             self.order = len(self.name) - 1
             self.in_deg = 0
             self.out_deg = 0
-            self.in_freq = 0
-            self.out_freq = 0
             self.parent = parent
             self.children = {}
             self.marked = False # used during pruning
-            self.orphan = False
             
         def __str__(self):
-            return ('{}[{}:{}]{}'.format(self.get_label_full(), self.in_deg, self.out_deg, 
-                                        ' ORPHAN' if self.orphan else ''))
+            return ('{}[{}:{}]'.format(self.get_label_full(), self.in_deg, self.out_deg))
 
         def dump(self):
             return '------->' * (len(self.name) - 1) + str(self) + '\n'
@@ -930,7 +929,7 @@ class HONTree():
         def __init__(self):
             self.start_time = perf_counter()
             self._info = {}
-            self._info['runtime'] = self.get_time
+            self._info['runtime'] = self.get_time_seconds
             self._info['rss_size'] = self.get_rss
         
         def __getitem__(self, key):
@@ -941,6 +940,9 @@ class HONTree():
         
         def get_time(self):
             return strftime('%H:%M:%S', gmtime(perf_counter() - self.start_time))
+        
+        def get_time_seconds(self):
+            return '{:.3f}'.format(perf_counter() - self.start_time)
         
         def get_rss(self):
             return(Process(getpid()).memory_info().rss >> 20)
@@ -1051,41 +1053,41 @@ if ray_available:
             Returns:
                 see get_smap()
             """
-            log_step = self.log_interval * len(lines)
+            log_step = int(self.log_interval * len(lines))
             for i, line in enumerate(lines):
                 if not i % log_step:
                     self._send_signal('Processing line {:,d}/{:,d} of my partition...'
                                       .format(i, len(lines)))
-                self._populate_smap_vector(line)
+                self._populate_smap_seq(line)
             
-            self._send_signal('Procesing successfully completed on my partition. Returning smap with ' + 
+            self._send_signal('Processing successfully completed on my partition. Returning smap with ' + 
                               '{:,d} sequences...'.format(len(self.smap)))
             self._send_signal('Local mem usage: {:,d}MB'
                               .format(Process(getpid()).memory_info().rss >> 20))
             return self.get_smap()
 
-        def _populate_smap_vector(self, vec):
-            """The method used to get sequences from an input vector.
+        def _populate_smap_seq(self, seq):
+            """The method used to get sequences from an input sequence.
     
             Description:
-                This method accepts a single input vector and
+                This method accepts a single input sequence and
                 generates sequences with length k. It functions
-                like HONTree._grow_vector, but instead of creating tree
+                like HONTree._grow_sequence, but instead of creating tree
                 nodes it just counts occurrences.
             
             Parameters:
-                line (string): a single input vector
+                line (string): a single input sequence
                 
             Returns:
                 None (sequences are modified in place in self.smap)
             """
             q = deque(maxlen = self.k+1)
             
-            vec = vec.strip().split(self.inf_delimiter)[self.inf_num_prefixes:]
+            seq = seq.strip().split(self.inf_delimiter)[self.inf_num_prefixes:]
             # prime the queue with first entities in the sequence
-            for e in vec[:self.k+1]:
+            for e in seq[:self.k+1]:
                 q.append(e)
-            for e in vec[self.k+1:]:
+            for e in seq[self.k+1:]:
                 for i in range(1, len(q) + 1):
                     self.smap[tuple([int(node) for node in islice(q, i)])] += 1
                 q.popleft()
@@ -1104,7 +1106,10 @@ if ray_available:
             Returns:
                 None
             """
-            ray.experimental.signal.send(msg)
+            try:
+                ray.experimental.signal.send(msg)
+            except:
+                pass
 # =========================================================================
 # END _SMap DEFINITION
 # =========================================================================
@@ -1112,17 +1117,17 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('infname', help='source path + file name')
-    parser.add_argument('otfname', help='destination path + file name')
+    parser.add_argument('otfname', help='destination path + file name, use ! to avoid save')
     parser.add_argument('maxorder', help='max order to use in growing the HON', type=int)
     parser.add_argument('-w', '--numcpus', help='number of workers', type=int, default=1)
-    parser.add_argument('-p', '--infnumprefixes', help='number of prefixes for input vectors', 
+    parser.add_argument('-p', '--infnumprefixes', help='number of prefixes for input sequences', 
                         type=int, default=1)
-    parser.add_argument('-di', '--infdelimiter', help='delimiter for entities in input vectors', 
+    parser.add_argument('-di', '--infdelimiter', help='delimiter for entities in input sequences', 
                         default=' ')
     parser.add_argument('-do', '--otfdelimiter', help='delimiter for output network', default=' ')
     parser.add_argument('-s', '--skipprune', help='whether to skip pruning the tree', 
                         action='store_true', default=False)
-    parser.add_argument('-r', '--reverseprune', help='enable reverse pruning',
+    parser.add_argument('-b', '--bottomup', help='enable bottom-up pruning (default is top-down)',
                         action='store_true', default=False)
     parser.add_argument('-t', '--tau', help='threshold multiplier for determining dependencies', 
                         type=float, default=1.0)
@@ -1131,7 +1136,7 @@ if __name__ == '__main__':
     parser.add_argument('-o', '--logname', help='location to write log output', 
                         default=None)
     parser.add_argument('-lsg', '--logisgrow', 
-                        help='logging interval for sequential growth', type=int, default=1000)
+                        help='logging interval for sequential growth', type=int, default=10000)
     parser.add_argument('-lpg', '--logipgrow', 
                         help='logging interval for parallel growth', type=float, default=0.2)
     parser.add_argument('-lpr', '--logiprune', 
@@ -1148,17 +1153,16 @@ if __name__ == '__main__':
                  log_name=args.logname, 
                  verbose=args.verbose,
                  prune= not args.skipprune,
-                 prune_reverse=args.reverseprune,
+                 bottom_up=args.bottomup,
                  tau=args.tau,
                  seq_grow_log_step=args.logisgrow, 
                  par_grow_log_interval=args.logipgrow, 
-                 prune_log_interval=args.logiprune, 
+                 prune_log_interval=args.logiprune,
+                 dotf_name = args.dotfname
                  )
-    t1.extract(args.otfname, args.otfdelimiter)
+    t1.extract(args.otfname if args.otfname != '!' else None, args.otfdelimiter)
     
-    if args.dotfname:
-        with open(args.dotfname, 'w+') as otf_divergences: 
-            otf_divergences.write('\n'.join(t1.get_divergences()))
+    sys.exit('')
 # =====================================================================
 # END growhon.py
 # =====================================================================
