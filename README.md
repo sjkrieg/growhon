@@ -1,4 +1,5 @@
 # GrowHON
+![Toy example of growing a HON from sequence input](https://raw.githubusercontent.com/sjkrieg/growhon/master/toyhon.png)
 Python implementation of GrowHON for generating a Higher-Order Network (HON) from sequence input. GrowHON accepts any text file as input, and processes each line as a sequence vector. The output is a weighted adjacency list in CSV format.
 
 ## Getting Started
