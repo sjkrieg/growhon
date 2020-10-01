@@ -96,3 +96,7 @@ Additional information is provided in the module docstring:
 ## Authors
 
 * **Steven Krieg** - (skrieg@nd.edu)
+
+## Reference
+If you make use of this code, please cite our paper!
+Krieg, Steven J., Peter Kogge, and Nitesh V. Chawla. "GrowHON: A Scalable Algorithm for Growing Higher-order Networks of Sequences." In International Conference on Complex Networks and Their Applications (accepted for Dec 2020). Springer, Cham.
