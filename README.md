@@ -109,5 +109,4 @@ Publications that utilize GrowHON include:
 This algorithm is based on the node-splitting paradigm introduced by Xu et al., and grows the same type of network but in a more accurate and scalable fashion. Their paper and code repository can be found at:
 
 * Xu, J., Wickramarathne, T. L., & Chawla, N. V. (2016). Representing higher-order dependencies in networks. *Science advances*, 2(5), e1600028.
-
-https://github.com/xyjprc/hon
+* https://github.com/xyjprc/hon
