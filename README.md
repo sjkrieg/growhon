@@ -100,10 +100,14 @@ Additional information is provided in the module docstring:
 ## Reference
 If you make use of this code, please cite our paper!
 
-Krieg, Steven J., Peter Kogge, and Nitesh V. Chawla. "GrowHON: A Scalable Algorithm for Growing Higher-order Networks of Sequences." In *International Conference on Complex Networks and Their Applications* (accepted for Dec 2020). Springer, Cham.
+* Krieg, Steven J., Peter Kogge, and Nitesh V. Chawla. "GrowHON: A Scalable Algorithm for Growing Higher-order Networks of Sequences." In *International Conference on Complex Networks and Their Applications* (accepted for Dec 2020). Springer, Cham.
+
+Publications that utilize GrowHON include:
+
+* Krieg, Steven J., Daniel H. Robertson, Meeta P. Pradhan, and Nitesh V. Chawla. “Higher-order Networks of Diabetes Comorbidities: Disease Trajectories that Matter.” (Accepted for publication by *Proceedings of the IEEE International Conference on Healthcare Informatics*, 2020).
 
 This algorithm is based on the node-splitting paradigm introduced by Xu et al., and grows the same type of network but in a more accurate and scalable fashion. Their paper and code repository can be found at:
 
-Xu, J., Wickramarathne, T. L., & Chawla, N. V. (2016). Representing higher-order dependencies in networks. *Science advances*, 2(5), e1600028.
+* Xu, J., Wickramarathne, T. L., & Chawla, N. V. (2016). Representing higher-order dependencies in networks. *Science advances*, 2(5), e1600028.
 
 https://github.com/xyjprc/hon
