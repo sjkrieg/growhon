@@ -59,7 +59,7 @@ class HONTree():
     def __init__(self, 
                  k, 
                  inf_name=None, 
-                 num_cpus=0, 
+                 num_cpus=1, 
                  inf_delimiter=' ', 
                  inf_num_prefixes=1, 
                  order_delimiter='|', 
