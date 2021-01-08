@@ -85,6 +85,23 @@ python growhon.py airport_sample_sequences.txt airport_sample_hon.txt 3 -w 4 -p 
 
 Example 3 was used to generate the "airport_sample_hon.txt" file in this repository.
 
+## Importing GrowHON as a Package
+You can also import GrowHON into your own script (first save growhon.py locally) like the following:
+```
+import growhon
+t = growhon.HONTree(3) # max order of 3
+t.grow('airport_sample_sequences.txt')
+t.prune()
+t.extract('airport_sample_hon.txt')
+```
+
+Alternatively, you can call the grow and prune methods as part of the tree constructor by providing an input file name:
+```
+import growhon
+t = growhon.HONTree(3, 'airport_sample_sequences.txt')
+t.extract() # prints to console if no output file is provided
+```
+
 ## Help
 
 Additional information is provided in the module docstring:
