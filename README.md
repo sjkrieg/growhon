@@ -46,7 +46,10 @@ Required arguments must be specified in the correct order and immediately follow
                         whether to skip the prune phase (bool; default False)
   -t TAU, --tau TAU
                         threshold multiplier for determining dependencies (float; default 1.0)
-                        higher values mean that dependencies must exceed a higher threshold, so the resulting network will have fewer edges
+                        higher values mean that dependencies must exceed a higher threshold, so the resulting network will be smaller
+  -m MINSUPPORT, --minsupport MINSUPPORT
+                        sample frequency for considering whether a pattern is a dependency (int; default 1)
+                        higher values mean that dependencies must occur more frequently for their KLD to be considered, so the resulting network will be smaller
   -e DOTFNAME, --dotfname DOTFNAME
                         destination path + file for divergences (string; default None)
                         if a value if is provided, the KLD values for each sequence will be written as a CSV file
