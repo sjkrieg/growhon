@@ -20,7 +20,7 @@ How to use:
 # MODULES REQUIRED FOR CORE FUNCTIONALITY
 # =================================================================
 from collections import defaultdict, deque
-from itertools import islice
+from itertools import islice, permutations
 from math import log, ceil
 from multiprocessing import cpu_count
 import numpy as np
@@ -59,7 +59,7 @@ class HONTree():
     def __init__(self, 
                  k, 
                  inf_name=None, 
-                 num_cpus=1, 
+                 num_cpus=0, 
                  inf_delimiter=' ', 
                  inf_num_prefixes=1, 
                  order_delimiter='|', 
@@ -134,10 +134,12 @@ class HONTree():
                     otf_divergences.write('\n'.join(self.get_divergences()))
             if prune: 
                 self.prune(bottom_up)
-
-    # =================================================================
+# =================================================================
     # BEGIN EXPOSED FUNCTIONS FOR GROWING, PRUNING, AND EXTRACTING
     # =================================================================
+    def close_log(self):
+        logging.shutdown()
+    
     def grow(self, inf_name, num_cpus=None, inf_delimiter=None, inf_num_prefixes=None):
         """The main method used to grow the HONTree.
         
@@ -668,8 +670,10 @@ class HONTree():
             True if the higher-order node should be preserved;
             False otherwise
         """
-        divergence = self._get_divergence(hord_node)
-        threshold = self._get_divergence_threshold(hord_node)
+        if hord_node.in_deg >= self.min_support:
+            divergence = self._get_divergence(hord_node)
+            threshold = self._get_divergence_threshold(hord_node)
+            return (divergence > threshold)
         """
         if self.verbose: 
             self.logger.info('{} -> {}'
@@ -684,7 +688,7 @@ class HONTree():
             else:
                 self.logger.info('{} does not have a dependency.'.format(str(hord_node)))
         """
-        return (divergence > threshold)
+        return False
 
     def _get_divergence(self, hord_node):
         """Measures the KLD (relative entropy) of a higher-order node.
@@ -828,6 +832,35 @@ class HONTree():
                     self._delete_children(node)
             self.logger.info('Pruning successfully completed on order {}.'.format(order + 1)) 
         self.logger.info('Pruning successfully completed all orders!') 
+        
+        # self.logger.info('EXPERIMENTAL: checking for sequences to merge...')
+        # starting at the second-to-last level of the tree
+        # for order in range(2, self.k):
+            # getting nodes from nmap is faster than tree traversal
+            # cur_order = [n for n in self.nmap.values() if n.order == order]
+            # log_step = ceil(self.prune_log_interval * len(cur_order))
+            # self.logger.info('Testing {:,d} nodes from order {}...'
+                             # .format(len(cur_order), order + 1))
+            # for i, node in enumerate(cur_order):
+                # add an update to the log every so often
+                # if not i % log_step:
+                    # self.logger.info('Testing node {:,d}/{:,d} ({}%) in order {}...'
+                                # .format(i, len(cur_order), int(i*100/len(cur_order)), order + 1))
+                
+                # self.logger.info(f'{node}')
+                # if not node.checked_for_merge:
+                    # nodes_to_check = self._get_merge_candidates(node)
+                    # print(nodes_to_check)
+                    # for n in nodes_to_check:
+                        # pass
+                        #n.checked_for_merge = True
+                
+            # self.logger.info('Merging successfully completed on order {}.'.format(order + 1)) 
+        # self.logger.info('Merging successfully completed all orders!') 
+    
+    def _get_merge_candidates(self, node):
+        parent = node.parent.name
+        return [self.nmap[tuple(n)].name for n in permutations(parent, len(parent)) if tuple(n) in self.nmap]
     
     def _prune_bottom_up(self):
         """Prune the tree bottom_up.
@@ -903,6 +936,7 @@ class HONTree():
             self.parent = parent
             self.children = {}
             self.marked = False # used during pruning
+            self.checked_for_merge = False
             
         def __str__(self):
             return ('{}[{}:{}]'.format(self.get_label_full(), self.in_deg, self.out_deg))
@@ -1118,7 +1152,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('infname', help='source path + file name')
     parser.add_argument('otfname', help='destination path + file name, use ! to avoid save')
-    parser.add_argument('maxorder', help='max order to use in growing the HON', type=int)
+    parser.add_argument('k', help='max order to use in growing the HON', type=int)
     parser.add_argument('-w', '--numcpus', help='number of workers', type=int, default=1)
     parser.add_argument('-p', '--infnumprefixes', help='number of prefixes for input sequences', 
                         type=int, default=1)
@@ -1131,6 +1165,8 @@ if __name__ == '__main__':
                         action='store_true', default=False)
     parser.add_argument('-t', '--tau', help='threshold multiplier for determining dependencies', 
                         type=float, default=1.0)
+    parser.add_argument('-m', '--minsupport', help='minimum support required for a dependency',
+                        type=int, default=1)
     parser.add_argument('-e', '--dotfname', help='destination path + file for divergences', 
                         default=None)
     parser.add_argument('-o', '--logname', help='location to write log output', 
@@ -1145,7 +1181,7 @@ if __name__ == '__main__':
                         action='store_true', default=False)
     args = parser.parse_args()
     
-    t1 = HONTree(args.maxorder, 
+    t1 = HONTree(args.k, 
                  args.infname, 
                  inf_num_prefixes=args.infnumprefixes, 
                  inf_delimiter=args.infdelimiter,
@@ -1155,14 +1191,14 @@ if __name__ == '__main__':
                  prune= not args.skipprune,
                  bottom_up=args.bottomup,
                  tau=args.tau,
+                 min_support=args.minsupport,
                  seq_grow_log_step=args.logisgrow, 
                  par_grow_log_interval=args.logipgrow, 
                  prune_log_interval=args.logiprune,
                  dotf_name = args.dotfname
                  )
     t1.extract(args.otfname if args.otfname != '!' else None, args.otfdelimiter)
-    
-    sys.exit('')
+    t1.close_log()
 # =====================================================================
 # END growhon.py
 # =====================================================================
